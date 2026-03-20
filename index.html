@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Googolpede</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #000;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    overflow: hidden;
+    font-family: monospace;
+  }
+  canvas {
+    border: 2px solid #0f0;
+    image-rendering: pixelated;
+  }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+// Grid dimensions (fixed cell count)
+const COLS = 30;
+const ROWS = 24;
+const HUD_ROWS = 2; // HUD takes 2 rows worth of height
+
+// Dynamic sizing
+let CELL, HUD_HEIGHT;
+
+function resize() {
+  const pad = 20; // padding around canvas
+  const availW = window.innerWidth - pad;
+  const availH = window.innerHeight - pad;
+  // Total rows including HUD
+  const totalRows = ROWS + HUD_ROWS;
+  CELL = Math.floor(Math.min(availW / COLS, availH / totalRows));
+  CELL = Math.max(CELL, 12); // minimum cell size
+  HUD_HEIGHT = CELL * HUD_ROWS;
+  canvas.width = COLS * CELL;
+  canvas.height = ROWS * CELL + HUD_HEIGHT;
+}
+
+resize();
+window.addEventListener('resize', resize);
+
+// Colors
+const COL_BG = '#000';
+const COL_SNAKE_HEAD = '#5f5';
+const COL_TEXT = '#fff';
+const COL_WALL = '#0a0';
+const COL_HUD_BG = '#111';
+const COL_EQUATION = '#0ff';
+
+// Game state
+const STATE_TITLE = 0;
+const STATE_PLAYING = 1;
+const STATE_GAMEOVER = 2;
+let gameState = STATE_TITLE;
+let snake, direction, nextDirection, score, speed, gameOver, paused;
+let equation, correctAnswer, targets, moveTimer;
+let titleSnake = []; // decorative snake on title screen
+let titleSnakeTimer = 0;
+let titleSnakeDir = { x: 1, y: 0 };
+
+// Effects
+let particles = [];
+let floatingTexts = [];
+let screenFlash = 0; // 0-1, decays each frame
+let snakePulse = 0;  // 0-1, makes the snake glow briefly
+
+// Initialize decorative title snake
+function initTitleSnake() {
+  titleSnake = [];
+  const y = Math.floor(ROWS * 0.7);
+  for (let i = 0; i < 12; i++) {
+    titleSnake.push({ x: Math.floor(COLS / 2) - i, y: y });
+  }
+  titleSnakeDir = { x: 1, y: 0 };
+  titleSnakeTimer = 0;
+}
+
+function init() {
+  const startX = Math.floor(COLS / 2);
+  const startY = Math.floor(ROWS / 2);
+  snake = [
+    { x: startX, y: startY },
+    { x: startX - 1, y: startY },
+    { x: startX - 2, y: startY },
+  ];
+  direction = { x: 1, y: 0 };
+  nextDirection = { x: 1, y: 0 };
+  score = 0;
+  speed = 150;
+  gameOver = false;
+  paused = false;
+  moveTimer = 0;
+  particles = [];
+  floatingTexts = [];
+  screenFlash = 0;
+  snakePulse = 0;
+  generateProblem();
+}
+
+function spawnCorrectEffects(gridX, gridY, value) {
+  const C = CELL;
+  const oY = HUD_HEIGHT;
+  const cx = gridX * C + C / 2;
+  const cy = gridY * C + oY + C / 2;
+
+  // Burst of particles
+  const colors = ['#0f0', '#5f5', '#ff0', '#0ff', '#fff', '#5ff', '#af0'];
+  for (let i = 0; i < 28; i++) {
+    const angle = (Math.PI * 2 * i) / 28 + (Math.random() - 0.5) * 0.5;
+    const speed = C * (1.5 + Math.random() * 3);
+    particles.push({
+      x: cx,
+      y: cy,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 1,
+      decay: 0.8 + Math.random() * 1.2,
+      size: C * (0.08 + Math.random() * 0.15),
+      color: colors[Math.floor(Math.random() * colors.length)],
+    });
+  }
+
+  // Sparkle ring - smaller particles in a wider ring
+  for (let i = 0; i < 12; i++) {
+    const angle = (Math.PI * 2 * i) / 12;
+    const speed = C * (3 + Math.random() * 2);
+    particles.push({
+      x: cx,
+      y: cy,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      life: 1,
+      decay: 1.5 + Math.random() * 0.5,
+      size: C * (0.04 + Math.random() * 0.06),
+      color: '#fff',
+    });
+  }
+
+  // Floating score text
+  floatingTexts.push({
+    x: cx,
+    y: cy,
+    text: '+1',
+    life: 1,
+    decay: 0.7,
+    vy: -C * 2,
+    size: C * 0.9,
+  });
+
+  // Floating "CORRECT!" text
+  floatingTexts.push({
+    x: cx,
+    y: cy + C * 0.8,
+    text: 'CORRECT!',
+    life: 1,
+    decay: 0.6,
+    vy: -C * 1.2,
+    size: C * 0.55,
+  });
+
+  // Screen flash
+  screenFlash = 0.4;
+  snakePulse = 1;
+}
+
+function updateEffects(dt) {
+  const sec = dt / 1000;
+
+  // Update particles
+  for (let i = particles.length - 1; i >= 0; i--) {
+    const p = particles[i];
+    p.x += p.vx * sec;
+    p.y += p.vy * sec;
+    p.vx *= 0.96;
+    p.vy *= 0.96;
+    p.vy += CELL * 1.5 * sec; // slight gravity
+    p.life -= p.decay * sec;
+    if (p.life <= 0) particles.splice(i, 1);
+  }
+
+  // Update floating texts
+  for (let i = floatingTexts.length - 1; i >= 0; i--) {
+    const ft = floatingTexts[i];
+    ft.y += ft.vy * sec;
+    ft.life -= ft.decay * sec;
+    if (ft.life <= 0) floatingTexts.splice(i, 1);
+  }
+
+  // Decay screen flash
+  if (screenFlash > 0) {
+    screenFlash = Math.max(0, screenFlash - sec * 3);
+  }
+
+  // Decay snake pulse
+  if (snakePulse > 0) {
+    snakePulse = Math.max(0, snakePulse - sec * 2.5);
+  }
+}
+
+function drawEffects() {
+  // Screen flash overlay
+  if (screenFlash > 0) {
+    ctx.fillStyle = `rgba(0, 255, 100, ${screenFlash * 0.3})`;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }
+
+  // Particles
+  for (const p of particles) {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.color;
+    ctx.shadowColor = p.color;
+    ctx.shadowBlur = p.size * 3;
+    ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+  }
+  ctx.shadowBlur = 0;
+  ctx.globalAlpha = 1;
+
+  // Floating texts
+  for (const ft of floatingTexts) {
+    ctx.globalAlpha = ft.life;
+    ctx.save();
+    ctx.shadowColor = '#ff0';
+    ctx.shadowBlur = 10;
+    ctx.fillStyle = '#ff0';
+    ctx.font = 'bold ' + Math.round(ft.size * (2 - ft.life)) + 'px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(ft.text, ft.x, ft.y);
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+}
+
+function generateProblem() {
+  let a, b, op, answer;
+
+  if (score < 5) {
+    a = randInt(1, 10);
+    b = randInt(1, 10);
+    op = '+';
+    answer = a + b;
+  } else if (score < 10) {
+    if (Math.random() < 0.5) {
+      a = randInt(1, 15);
+      b = randInt(1, 15);
+      op = '+';
+      answer = a + b;
+    } else {
+      a = randInt(5, 20);
+      b = randInt(1, a);
+      op = '-';
+      answer = a - b;
+    }
+  } else if (score < 20) {
+    const r = Math.random();
+    if (r < 0.33) {
+      a = randInt(5, 25);
+      b = randInt(5, 25);
+      op = '+';
+      answer = a + b;
+    } else if (r < 0.66) {
+      a = randInt(10, 30);
+      b = randInt(1, a);
+      op = '-';
+      answer = a - b;
+    } else {
+      a = randInt(2, 9);
+      b = randInt(2, 9);
+      op = '×';
+      answer = a * b;
+    }
+  } else {
+    const r = Math.random();
+    if (r < 0.25) {
+      a = randInt(10, 50);
+      b = randInt(10, 50);
+      op = '+';
+      answer = a + b;
+    } else if (r < 0.5) {
+      a = randInt(20, 60);
+      b = randInt(1, a);
+      op = '-';
+      answer = a - b;
+    } else {
+      a = randInt(3, 12);
+      b = randInt(3, 12);
+      op = '×';
+      answer = a * b;
+    }
+  }
+
+  equation = `${a} ${op} ${b} = ?`;
+  correctAnswer = answer;
+  spawnTargets();
+}
+
+function spawnTargets() {
+  const count = randInt(4, 5);
+  targets = [];
+
+  const decoySet = new Set();
+  decoySet.add(correctAnswer);
+
+  while (decoySet.size < count) {
+    let offset = randInt(1, Math.max(3, Math.floor(correctAnswer * 0.3) + 1));
+    let decoy = correctAnswer + (Math.random() < 0.5 ? offset : -offset);
+    if (decoy < 0) decoy = correctAnswer + offset;
+    if (!decoySet.has(decoy)) {
+      decoySet.add(decoy);
+    }
+  }
+
+  const values = Array.from(decoySet);
+  for (let i = values.length - 1; i > 0; i--) {
+    const j = randInt(0, i);
+    [values[i], values[j]] = [values[j], values[i]];
+  }
+
+  const occupied = new Set();
+  for (const s of snake) occupied.add(`${s.x},${s.y}`);
+
+  for (const val of values) {
+    let pos;
+    let attempts = 0;
+    do {
+      pos = { x: randInt(1, COLS - 2), y: randInt(1, ROWS - 2) };
+      attempts++;
+    } while ((occupied.has(`${pos.x},${pos.y}`) || targets.some(t => t.x === pos.x && t.y === pos.y)) && attempts < 200);
+
+    targets.push({ x: pos.x, y: pos.y, value: val, isCorrect: val === correctAnswer });
+  }
+}
+
+function randInt(min, max) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+// Input
+document.addEventListener('keydown', (e) => {
+  if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {
+    e.preventDefault();
+  }
+
+  if (gameState === STATE_TITLE) {
+    if (e.key === ' ') {
+      gameState = STATE_PLAYING;
+      init();
+    }
+    return;
+  }
+
+  if (gameState === STATE_GAMEOVER) {
+    if (e.key === ' ') {
+      gameState = STATE_PLAYING;
+      init();
+    }
+    return;
+  }
+
+  switch (e.key) {
+    case 'ArrowUp':
+      if (direction.y === 0) nextDirection = { x: 0, y: -1 };
+      break;
+    case 'ArrowDown':
+      if (direction.y === 0) nextDirection = { x: 0, y: 1 };
+      break;
+    case 'ArrowLeft':
+      if (direction.x === 0) nextDirection = { x: -1, y: 0 };
+      break;
+    case 'ArrowRight':
+      if (direction.x === 0) nextDirection = { x: 1, y: 0 };
+      break;
+  }
+});
+
+function updateTitleSnake(dt) {
+  titleSnakeTimer += dt;
+  if (titleSnakeTimer < 120) return;
+  titleSnakeTimer = 0;
+
+  const head = titleSnake[0];
+  // Randomly change direction occasionally, but stay in bounds
+  if (Math.random() < 0.15) {
+    if (titleSnakeDir.x !== 0) {
+      titleSnakeDir = { x: 0, y: Math.random() < 0.5 ? -1 : 1 };
+    } else {
+      titleSnakeDir = { x: Math.random() < 0.5 ? -1 : 1, y: 0 };
+    }
+  }
+
+  let nx = head.x + titleSnakeDir.x;
+  let ny = head.y + titleSnakeDir.y;
+
+  // Bounce off walls
+  if (nx <= 0 || nx >= COLS - 1) {
+    titleSnakeDir.x *= -1;
+    nx = head.x + titleSnakeDir.x;
+  }
+  if (ny <= 0 || ny >= ROWS - 1) {
+    titleSnakeDir.y *= -1;
+    ny = head.y + titleSnakeDir.y;
+  }
+
+  titleSnake.unshift({ x: nx, y: ny });
+  titleSnake.pop();
+}
+
+function update(dt) {
+  if (gameState === STATE_TITLE) {
+    updateTitleSnake(dt);
+    return;
+  }
+  updateEffects(dt);
+  if (gameOver) return;
+
+  moveTimer += dt;
+  if (moveTimer < speed) return;
+  moveTimer = 0;
+
+  direction = nextDirection;
+  const head = { x: snake[0].x + direction.x, y: snake[0].y + direction.y };
+
+  // Wall collision
+  if (head.x < 0 || head.x >= COLS || head.y < 0 || head.y >= ROWS) {
+    gameOver = true;
+    gameState = STATE_GAMEOVER;
+    return;
+  }
+
+  // Self collision
+  for (let i = 0; i < snake.length; i++) {
+    if (snake[i].x === head.x && snake[i].y === head.y) {
+      gameOver = true;
+      gameState = STATE_GAMEOVER;
+      return;
+    }
+  }
+
+  // Check target collision
+  let ate = false;
+  for (let i = targets.length - 1; i >= 0; i--) {
+    if (targets[i].x === head.x && targets[i].y === head.y) {
+      if (targets[i].isCorrect) {
+        spawnCorrectEffects(targets[i].x, targets[i].y, targets[i].value);
+        score++;
+        speed = Math.max(60, speed - 4);
+        ate = true;
+      } else {
+        gameOver = true;
+        gameState = STATE_GAMEOVER;
+        snake.unshift(head);
+        return;
+      }
+      break;
+    }
+  }
+
+  snake.unshift(head);
+  if (!ate) {
+    snake.pop();
+  } else {
+    generateProblem();
+  }
+}
+
+function drawSnakeBody(snakeArr, dir, oY) {
+  const C = CELL;
+  const pulseBoost = snakePulse * 80;
+  for (let i = snakeArr.length - 1; i >= 1; i--) {
+    const s = snakeArr[i];
+    const brightness = Math.min(255, Math.floor(80 + 176 * (i / snakeArr.length) + pulseBoost));
+    const r = Math.min(255, Math.floor(pulseBoost * 1.5));
+    const b = Math.min(255, Math.floor(pulseBoost * 0.5));
+    ctx.fillStyle = `rgb(${r}, ${brightness}, ${b})`;
+    ctx.fillRect(s.x * C + 1, s.y * C + oY + 1, C - 2, C - 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.fillRect(s.x * C + Math.floor(C / 2), s.y * C + oY + 1, 1, C - 2);
+    ctx.fillRect(s.x * C + 1, s.y * C + oY + Math.floor(C / 2), C - 2, 1);
+  }
+
+  // Head
+  const h = snakeArr[0];
+  if (snakePulse > 0) {
+    ctx.save();
+    ctx.shadowColor = '#ff0';
+    ctx.shadowBlur = CELL * snakePulse;
+    ctx.fillStyle = `rgb(${Math.floor(100 + 155 * snakePulse)}, 255, ${Math.floor(100 + 100 * snakePulse)})`;
+    ctx.fillRect(h.x * C + 1, h.y * C + oY + 1, C - 2, C - 2);
+    ctx.restore();
+  } else {
+    ctx.fillStyle = COL_SNAKE_HEAD;
+    ctx.fillRect(h.x * C + 1, h.y * C + oY + 1, C - 2, C - 2);
+  }
+
+  // Eyes
+  ctx.fillStyle = '#000';
+  const eyeSize = Math.max(2, Math.round(C * 0.12));
+  const eyeInset = Math.round(C * 0.2);
+  let ex1, ey1, ex2, ey2;
+  if (dir.x === 1) {
+    ex1 = h.x * C + C - eyeInset - eyeSize; ey1 = h.y * C + oY + eyeInset;
+    ex2 = h.x * C + C - eyeInset - eyeSize; ey2 = h.y * C + oY + C - eyeInset - eyeSize;
+  } else if (dir.x === -1) {
+    ex1 = h.x * C + eyeInset; ey1 = h.y * C + oY + eyeInset;
+    ex2 = h.x * C + eyeInset; ey2 = h.y * C + oY + C - eyeInset - eyeSize;
+  } else if (dir.y === -1) {
+    ex1 = h.x * C + eyeInset; ey1 = h.y * C + oY + eyeInset;
+    ex2 = h.x * C + C - eyeInset - eyeSize; ey2 = h.y * C + oY + eyeInset;
+  } else {
+    ex1 = h.x * C + eyeInset; ey1 = h.y * C + oY + C - eyeInset - eyeSize;
+    ex2 = h.x * C + C - eyeInset - eyeSize; ey2 = h.y * C + oY + C - eyeInset - eyeSize;
+  }
+  ctx.fillRect(ex1, ey1, eyeSize, eyeSize);
+  ctx.fillRect(ex2, ey2, eyeSize, eyeSize);
+}
+
+function drawTitleScreen() {
+  const C = CELL;
+  const cx = canvas.width / 2;
+  const cy = canvas.height / 2;
+
+  // Background
+  ctx.fillStyle = COL_BG;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // Walls
+  for (let x = 0; x < COLS; x++) {
+    drawWallCell(x, 0, 0);
+    drawWallCell(x, ROWS + HUD_ROWS - 1, 0);
+  }
+  for (let y = 0; y < ROWS + HUD_ROWS; y++) {
+    drawWallCell(0, y, 0);
+    drawWallCell(COLS - 1, y, 0);
+  }
+
+  // Decorative snake slithering around
+  drawSnakeBody(titleSnake, titleSnakeDir, 0);
+
+  // Title - large glowing text
+  const titleSize = Math.max(36, Math.round(C * 2.5));
+  ctx.save();
+  ctx.shadowColor = '#0f0';
+  ctx.shadowBlur = 20;
+  ctx.fillStyle = '#0f0';
+  ctx.font = 'bold ' + titleSize + 'px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('GOOGOLPEDE', cx, cy - C * 4);
+  ctx.restore();
+
+  // Subtitle
+  const subSize = Math.max(14, Math.round(C * 0.7));
+  ctx.fillStyle = COL_EQUATION;
+  ctx.font = subSize + 'px monospace';
+  ctx.fillText('A Math Snake Game', cx, cy - C * 2.2);
+
+  // Divider line
+  const divW = C * 12;
+  ctx.strokeStyle = '#0a0';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(cx - divW / 2, cy - C * 1.2);
+  ctx.lineTo(cx + divW / 2, cy - C * 1.2);
+  ctx.stroke();
+
+  // Instructions
+  const instrSize = Math.max(12, Math.round(C * 0.6));
+  ctx.font = instrSize + 'px monospace';
+  ctx.fillStyle = '#aaa';
+  const instructions = [
+    'Solve math problems by eating',
+    'the correct answer!',
+    '',
+    'ARROW KEYS to move',
+    'Eat the RIGHT answer to grow',
+    'Eat a WRONG answer = Game Over',
+    'Hit a wall or yourself = Game Over',
+  ];
+  instructions.forEach((line, i) => {
+    if (line === '') return;
+    ctx.fillStyle = i < 2 ? '#ccc' : '#888';
+    ctx.fillText(line, cx, cy + C * (i * 0.9 - 0.2));
+  });
+
+  // Blinking prompt
+  const promptSize = Math.max(16, Math.round(C * 0.8));
+  ctx.font = 'bold ' + promptSize + 'px monospace';
+  const blink = Math.sin(Date.now() / 400) > 0;
+  if (blink) {
+    ctx.fillStyle = '#ff0';
+    ctx.fillText('Press SPACE to Start', cx, cy + C * 6.5);
+  }
+
+  // Version / credits
+  const credSize = Math.max(10, Math.round(C * 0.45));
+  ctx.font = credSize + 'px monospace';
+  ctx.fillStyle = '#444';
+  ctx.fillText('Inspired by the 1993 DOS classic', cx, canvas.height - C * 0.8);
+}
+
+function draw() {
+  if (gameState === STATE_TITLE) {
+    drawTitleScreen();
+    return;
+  }
+
+  const C = CELL;
+
+  // Background
+  ctx.fillStyle = COL_BG;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  // HUD background
+  ctx.fillStyle = COL_HUD_BG;
+  ctx.fillRect(0, 0, canvas.width, HUD_HEIGHT);
+  ctx.strokeStyle = COL_WALL;
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, HUD_HEIGHT);
+  ctx.lineTo(canvas.width, HUD_HEIGHT);
+  ctx.stroke();
+
+  // Font sizes scale with cell size
+  const fontSm = Math.max(10, Math.round(C * 0.5)) + 'px monospace';
+  const fontMd = Math.max(12, Math.round(C * 0.65)) + 'px monospace';
+  const fontLg = Math.max(14, Math.round(C * 0.8)) + 'px monospace';
+  const fontXl = Math.max(20, Math.round(C * 1.4)) + 'px monospace';
+  const fontXxl = Math.max(28, Math.round(C * 1.8)) + 'px monospace';
+
+  // Score
+  ctx.fillStyle = COL_TEXT;
+  ctx.font = 'bold ' + fontMd;
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(`SCORE: ${score}`, C * 0.5, HUD_HEIGHT / 2 - C * 0.3);
+
+  // Equation
+  ctx.fillStyle = COL_EQUATION;
+  ctx.font = 'bold ' + fontLg;
+  ctx.textAlign = 'center';
+  ctx.fillText(equation, canvas.width / 2, HUD_HEIGHT / 2);
+
+  // Speed indicator
+  ctx.fillStyle = '#888';
+  ctx.font = fontSm;
+  ctx.textAlign = 'right';
+  ctx.fillText(`SPEED: ${Math.round((1 - (speed - 60) / 90) * 100)}%`, canvas.width - C * 0.5, HUD_HEIGHT / 2 - C * 0.3);
+
+  const oY = HUD_HEIGHT;
+
+  // Walls
+  for (let x = 0; x < COLS; x++) {
+    drawWallCell(x, 0, oY);
+    drawWallCell(x, ROWS - 1, oY);
+  }
+  for (let y = 0; y < ROWS; y++) {
+    drawWallCell(0, y, oY);
+    drawWallCell(COLS - 1, y, oY);
+  }
+
+  // Targets
+  for (const t of targets) {
+    const pulse = 0.6 + 0.4 * Math.sin(Date.now() / 300);
+    ctx.fillStyle = `rgba(255,255,100,${pulse * 0.15})`;
+    ctx.fillRect(t.x * C - 2, t.y * C + oY - 2, C + 4, C + 4);
+
+    ctx.fillStyle = '#220';
+    ctx.fillRect(t.x * C, t.y * C + oY, C, C);
+
+    ctx.fillStyle = COL_TEXT;
+    ctx.font = 'bold ' + fontMd;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(t.value.toString(), t.x * C + C / 2, t.y * C + oY + C / 2);
+  }
+
+  // Snake
+  drawSnakeBody(snake, direction, oY);
+
+  // Effects (particles, floating text, screen flash)
+  drawEffects();
+
+  // Game Over overlay
+  if (gameState === STATE_GAMEOVER) {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+    ctx.fillRect(0, oY, canvas.width, canvas.height - oY);
+
+    ctx.fillStyle = '#f00';
+    ctx.font = 'bold ' + fontXxl;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - C * 1.2);
+
+    ctx.fillStyle = COL_TEXT;
+    ctx.font = fontXl;
+    ctx.fillText(`Final Score: ${score}`, canvas.width / 2, canvas.height / 2 + C * 0.5);
+
+    ctx.fillStyle = '#888';
+    ctx.font = fontMd;
+    const blink = Math.sin(Date.now() / 400) > 0;
+    if (blink) {
+      ctx.fillText('Press SPACE to Restart', canvas.width / 2, canvas.height / 2 + C * 2);
+    }
+  }
+}
+
+function drawWallCell(x, y, oY) {
+  ctx.fillStyle = COL_WALL;
+  const fontSize = Math.max(10, Math.round(CELL * 0.55));
+  ctx.font = fontSize + 'px monospace';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('░', x * CELL + CELL / 2, y * CELL + oY + CELL / 2);
+}
+
+// Main loop
+let prevTime = 0;
+function loop(timestamp) {
+  const dt = timestamp - prevTime;
+  prevTime = timestamp;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+
+initTitleSnake();
+requestAnimationFrame((t) => {
+  prevTime = t;
+  loop(t);
+});
+</script>
+</body>
+</html>
