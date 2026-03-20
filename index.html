@@ -369,7 +369,7 @@ function init() {
   direction = { x: 1, y: 0 };
   nextDirection = { x: 1, y: 0 };
   score = 0;
-  speed = 150;
+  speed = 280;
   gameOver = false;
   paused = false;
   moveTimer = 0;
@@ -849,7 +849,7 @@ function update(dt) {
         sfxCorrect();
         spawnCorrectEffects(targets[i].x, targets[i].y, targets[i].value);
         score++;
-        speed = Math.max(60, speed - 4);
+        speed = Math.max(80, speed - 6);
         ate = true;
       } else {
         sfxWrong();
@@ -1070,7 +1070,7 @@ function draw() {
   ctx.fillStyle = '#888';
   ctx.font = fontSm;
   ctx.textAlign = 'right';
-  ctx.fillText(`SPEED: ${Math.round((1 - (speed - 60) / 90) * 100)}%`, canvas.width - C * 0.5, HUD_HEIGHT / 2 - C * 0.3);
+  ctx.fillText(`SPEED: ${Math.round((1 - (speed - 80) / 200) * 100)}%`, canvas.width - C * 0.5, HUD_HEIGHT / 2 - C * 0.3);
 
   const oY = HUD_HEIGHT;
 
