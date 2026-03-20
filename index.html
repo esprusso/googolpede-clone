@@ -59,6 +59,144 @@ const COL_WALL = '#0a0';
 const COL_HUD_BG = '#111';
 const COL_EQUATION = '#0ff';
 
+// Audio - Web Audio API synthesized sounds
+let audioCtx = null;
+
+function ensureAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+}
+
+function playTone(freq, duration, type, volume, rampDown) {
+  if (!audioCtx) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type || 'square';
+  osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+  gain.gain.setValueAtTime(volume || 0.15, audioCtx.currentTime);
+  if (rampDown !== false) {
+    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+  }
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.start();
+  osc.stop(audioCtx.currentTime + duration);
+}
+
+function sfxCorrect() {
+  ensureAudio();
+  // Ascending arpeggio - bright and rewarding
+  const notes = [523, 659, 784, 1047]; // C5, E5, G5, C6
+  notes.forEach((freq, i) => {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'square';
+    const t = audioCtx.currentTime + i * 0.07;
+    osc.frequency.setValueAtTime(freq, t);
+    gain.gain.setValueAtTime(0.12, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start(t);
+    osc.stop(t + 0.2);
+  });
+  // Sparkle on top
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = 'sine';
+  const t = audioCtx.currentTime + 0.25;
+  osc.frequency.setValueAtTime(1568, t); // G6
+  osc.frequency.exponentialRampToValueAtTime(2093, t + 0.15); // C7
+  gain.gain.setValueAtTime(0.08, t);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.start(t);
+  osc.stop(t + 0.3);
+}
+
+function sfxWrong() {
+  ensureAudio();
+  // Harsh descending buzz
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(300, audioCtx.currentTime);
+  osc.frequency.exponentialRampToValueAtTime(80, audioCtx.currentTime + 0.5);
+  gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.5);
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.start();
+  osc.stop(audioCtx.currentTime + 0.5);
+
+  // Dissonant second tone
+  const osc2 = audioCtx.createOscillator();
+  const gain2 = audioCtx.createGain();
+  osc2.type = 'square';
+  osc2.frequency.setValueAtTime(185, audioCtx.currentTime);
+  osc2.frequency.exponentialRampToValueAtTime(50, audioCtx.currentTime + 0.6);
+  gain2.gain.setValueAtTime(0.12, audioCtx.currentTime);
+  gain2.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.6);
+  osc2.connect(gain2);
+  gain2.connect(audioCtx.destination);
+  osc2.start();
+  osc2.stop(audioCtx.currentTime + 0.6);
+}
+
+function sfxGameOver() {
+  ensureAudio();
+  // Dramatic descending notes
+  const notes = [440, 370, 311, 233, 175];
+  notes.forEach((freq, i) => {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'square';
+    const t = audioCtx.currentTime + i * 0.15;
+    osc.frequency.setValueAtTime(freq, t);
+    gain.gain.setValueAtTime(0.15, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    osc.start(t);
+    osc.stop(t + 0.4);
+  });
+}
+
+function sfxStart() {
+  ensureAudio();
+  // Quick power-up sweep
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = 'square';
+  osc.frequency.setValueAtTime(220, audioCtx.currentTime);
+  osc.frequency.exponentialRampToValueAtTime(880, audioCtx.currentTime + 0.15);
+  gain.gain.setValueAtTime(0.12, audioCtx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.start();
+  osc.stop(audioCtx.currentTime + 0.3);
+
+  // Second chirp
+  const osc2 = audioCtx.createOscillator();
+  const gain2 = audioCtx.createGain();
+  osc2.type = 'square';
+  const t2 = audioCtx.currentTime + 0.15;
+  osc2.frequency.setValueAtTime(880, t2);
+  osc2.frequency.exponentialRampToValueAtTime(1760, t2 + 0.1);
+  gain2.gain.setValueAtTime(0.1, t2);
+  gain2.gain.exponentialRampToValueAtTime(0.001, t2 + 0.25);
+  osc2.connect(gain2);
+  gain2.connect(audioCtx.destination);
+  osc2.start(t2);
+  osc2.stop(t2 + 0.25);
+}
+
 // Game state
 const STATE_TITLE = 0;
 const STATE_PLAYING = 1;
@@ -313,13 +451,18 @@ function spawnTargets() {
   const decoySet = new Set();
   decoySet.add(correctAnswer);
 
+  let range = Math.max(3, Math.floor(Math.abs(correctAnswer) * 0.3) + 1);
+  let attempts = 0;
   while (decoySet.size < count) {
-    let offset = randInt(1, Math.max(3, Math.floor(correctAnswer * 0.3) + 1));
+    let offset = randInt(1, range);
     let decoy = correctAnswer + (Math.random() < 0.5 ? offset : -offset);
     if (decoy < 0) decoy = correctAnswer + offset;
     if (!decoySet.has(decoy)) {
       decoySet.add(decoy);
     }
+    attempts++;
+    // Widen range if we're stuck finding unique values
+    if (attempts % 10 === 0) range++;
   }
 
   const values = Array.from(decoySet);
@@ -355,6 +498,7 @@ document.addEventListener('keydown', (e) => {
 
   if (gameState === STATE_TITLE) {
     if (e.key === ' ') {
+      sfxStart();
       gameState = STATE_PLAYING;
       init();
     }
@@ -363,6 +507,7 @@ document.addEventListener('keydown', (e) => {
 
   if (gameState === STATE_GAMEOVER) {
     if (e.key === ' ') {
+      sfxStart();
       gameState = STATE_PLAYING;
       init();
     }
@@ -436,6 +581,7 @@ function update(dt) {
   if (head.x < 0 || head.x >= COLS || head.y < 0 || head.y >= ROWS) {
     gameOver = true;
     gameState = STATE_GAMEOVER;
+    sfxGameOver();
     return;
   }
 
@@ -444,6 +590,7 @@ function update(dt) {
     if (snake[i].x === head.x && snake[i].y === head.y) {
       gameOver = true;
       gameState = STATE_GAMEOVER;
+      sfxGameOver();
       return;
     }
   }
@@ -453,11 +600,13 @@ function update(dt) {
   for (let i = targets.length - 1; i >= 0; i--) {
     if (targets[i].x === head.x && targets[i].y === head.y) {
       if (targets[i].isCorrect) {
+        sfxCorrect();
         spawnCorrectEffects(targets[i].x, targets[i].y, targets[i].value);
         score++;
         speed = Math.max(60, speed - 4);
         ate = true;
       } else {
+        sfxWrong();
         gameOver = true;
         gameState = STATE_GAMEOVER;
         snake.unshift(head);
