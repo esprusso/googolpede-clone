@@ -2,54 +2,149 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Googolpede</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
+  html, body {
     background: #000;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    height: 100vh;
+    height: 100%;
     overflow: hidden;
     font-family: monospace;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  body {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
   }
   canvas {
     border: 2px solid #0f0;
     image-rendering: pixelated;
   }
+  #dpad {
+    display: none;
+    position: relative;
+    margin-top: 8px;
+  }
+  #dpad button {
+    position: absolute;
+    background: rgba(0, 255, 0, 0.12);
+    border: 2px solid rgba(0, 255, 0, 0.35);
+    color: #0f0;
+    font-family: monospace;
+    font-size: 24px;
+    font-weight: bold;
+    border-radius: 8px;
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
+    cursor: pointer;
+  }
+  #dpad button:active {
+    background: rgba(0, 255, 0, 0.35);
+    border-color: rgba(0, 255, 0, 0.7);
+  }
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
+<div id="dpad">
+  <button id="btn-up">&#9650;</button>
+  <button id="btn-down">&#9660;</button>
+  <button id="btn-left">&#9664;</button>
+  <button id="btn-right">&#9654;</button>
+</div>
 <script>
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
+const dpad = document.getElementById('dpad');
 
-// Grid dimensions (fixed cell count)
-const COLS = 30;
-const ROWS = 24;
-const HUD_ROWS = 2; // HUD takes 2 rows worth of height
-
-// Dynamic sizing
+// Grid dimensions - adaptive for portrait/landscape
+let COLS, ROWS;
+const HUD_ROWS = 2;
 let CELL, HUD_HEIGHT;
+let isMobile = false;
+let DPAD_SIZE = 0;
 
 function resize() {
-  const pad = 20; // padding around canvas
+  const pad = 16;
   const availW = window.innerWidth - pad;
   const availH = window.innerHeight - pad;
-  // Total rows including HUD
-  const totalRows = ROWS + HUD_ROWS;
-  CELL = Math.floor(Math.min(availW / COLS, availH / totalRows));
-  CELL = Math.max(CELL, 12); // minimum cell size
+
+  // Detect mobile by screen width or touch capability
+  isMobile = ('ontouchstart' in window) || window.innerWidth < 700;
+
+  if (isMobile && availH > availW) {
+    // Portrait mobile: narrower, taller grid
+    COLS = 18;
+    ROWS = 28;
+    // Reserve space for D-pad
+    DPAD_SIZE = Math.min(availW * 0.55, 200);
+    const totalRows = ROWS + HUD_ROWS;
+    CELL = Math.floor(Math.min(availW / COLS, (availH - DPAD_SIZE - 16) / totalRows));
+  } else if (isMobile) {
+    // Landscape mobile
+    COLS = 28;
+    ROWS = 16;
+    DPAD_SIZE = Math.min(availH * 0.45, 180);
+    const totalRows = ROWS + HUD_ROWS;
+    CELL = Math.floor(Math.min((availW - DPAD_SIZE - 16) / COLS, availH / totalRows));
+  } else {
+    // Desktop
+    COLS = 30;
+    ROWS = 24;
+    DPAD_SIZE = 0;
+    const totalRows = ROWS + HUD_ROWS;
+    CELL = Math.floor(Math.min(availW / COLS, availH / totalRows));
+  }
+
+  CELL = Math.max(CELL, 10);
   HUD_HEIGHT = CELL * HUD_ROWS;
   canvas.width = COLS * CELL;
   canvas.height = ROWS * CELL + HUD_HEIGHT;
+
+  // Position and size D-pad
+  if (isMobile) {
+    dpad.style.display = 'block';
+    const btnSize = Math.floor(DPAD_SIZE * 0.38);
+    const gap = Math.floor(DPAD_SIZE * 0.02);
+    dpad.style.width = (btnSize * 3 + gap * 2) + 'px';
+    dpad.style.height = (btnSize * 3 + gap * 2) + 'px';
+
+    const btns = {
+      up:    document.getElementById('btn-up'),
+      down:  document.getElementById('btn-down'),
+      left:  document.getElementById('btn-left'),
+      right: document.getElementById('btn-right'),
+    };
+    const s = btnSize + 'px';
+    for (const b of Object.values(btns)) {
+      b.style.width = s;
+      b.style.height = s;
+      b.style.fontSize = Math.floor(btnSize * 0.4) + 'px';
+      b.style.lineHeight = s;
+    }
+    btns.up.style.left = (btnSize + gap) + 'px'; btns.up.style.top = '0px';
+    btns.down.style.left = (btnSize + gap) + 'px'; btns.down.style.top = (btnSize * 2 + gap * 2) + 'px';
+    btns.left.style.left = '0px'; btns.left.style.top = (btnSize + gap) + 'px';
+    btns.right.style.left = (btnSize * 2 + gap * 2) + 'px'; btns.right.style.top = (btnSize + gap) + 'px';
+  } else {
+    dpad.style.display = 'none';
+  }
 }
 
 resize();
-window.addEventListener('resize', resize);
+window.addEventListener('resize', () => {
+  const oldCols = COLS, oldRows = ROWS;
+  resize();
+  // Re-init title snake if grid changed
+  if (gameState === STATE_TITLE && (COLS !== oldCols || ROWS !== oldRows)) {
+    initTitleSnake();
+  }
+});
 
 // Colors
 const COL_BG = '#000';
@@ -594,6 +689,95 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// D-pad button handlers
+function setupDpad() {
+  const dirs = {
+    'btn-up':    { x: 0, y: -1 },
+    'btn-down':  { x: 0, y: 1 },
+    'btn-left':  { x: -1, y: 0 },
+    'btn-right': { x: 1, y: 0 },
+  };
+  for (const [id, dir] of Object.entries(dirs)) {
+    const btn = document.getElementById(id);
+    const handler = (e) => {
+      e.preventDefault();
+      ensureAudio();
+      if (gameState !== STATE_PLAYING) return;
+      if (dir.x !== 0 && direction.x === 0) nextDirection = dir;
+      if (dir.y !== 0 && direction.y === 0) nextDirection = dir;
+    };
+    btn.addEventListener('touchstart', handler, { passive: false });
+    btn.addEventListener('mousedown', handler);
+  }
+}
+setupDpad();
+
+// Swipe gesture detection
+let touchStartX = 0, touchStartY = 0, touchStartTime = 0;
+
+canvas.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  ensureAudio();
+  const t = e.touches[0];
+  touchStartX = t.clientX;
+  touchStartY = t.clientY;
+  touchStartTime = Date.now();
+}, { passive: false });
+
+canvas.addEventListener('touchend', (e) => {
+  e.preventDefault();
+  const t = e.changedTouches[0];
+  const dx = t.clientX - touchStartX;
+  const dy = t.clientY - touchStartY;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const elapsed = Date.now() - touchStartTime;
+
+  if (gameState === STATE_TITLE || gameState === STATE_GAMEOVER) {
+    // Tap to start/restart
+    if (dist < 30 && elapsed < 400) {
+      sfxStart();
+      gameState = STATE_PLAYING;
+      init();
+    }
+    return;
+  }
+
+  if (gameState === STATE_ENTER_INITIALS) {
+    // Tap anywhere — show prompt for mobile keyboard
+    if (dist < 30 && elapsed < 400) {
+      promptMobileInitials();
+    }
+    return;
+  }
+
+  // Swipe to change direction during gameplay
+  if (dist > 30 && gameState === STATE_PLAYING) {
+    if (Math.abs(dx) > Math.abs(dy)) {
+      // Horizontal swipe
+      if (dx > 0 && direction.x === 0) nextDirection = { x: 1, y: 0 };
+      else if (dx < 0 && direction.x === 0) nextDirection = { x: -1, y: 0 };
+    } else {
+      // Vertical swipe
+      if (dy > 0 && direction.y === 0) nextDirection = { x: 0, y: 1 };
+      else if (dy < 0 && direction.y === 0) nextDirection = { x: 0, y: -1 };
+    }
+  }
+}, { passive: false });
+
+// Mobile initials entry via prompt
+function promptMobileInitials() {
+  const input = prompt('Enter your initials (3 chars):', initials);
+  if (input !== null) {
+    const cleaned = input.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 3);
+    if (cleaned.length > 0) {
+      initials = cleaned;
+      insertHighScore(initials, score);
+      sfxCorrect();
+      gameState = STATE_GAMEOVER;
+    }
+  }
+}
+
 function updateTitleSnake(dt) {
   titleSnakeTimer += dt;
   if (titleSnakeTimer < 120) return;
@@ -812,7 +996,7 @@ function drawTitleScreen() {
       'Solve math problems by eating',
       'the correct answer!',
       '',
-      'ARROW KEYS to move',
+      isMobile ? 'SWIPE or D-PAD to move' : 'ARROW KEYS to move',
       'Eat the RIGHT answer to grow',
       'Eat a WRONG answer = Game Over',
       'Hit a wall or yourself = Game Over',
@@ -830,7 +1014,7 @@ function drawTitleScreen() {
   const blink = Math.sin(Date.now() / 400) > 0;
   if (blink) {
     ctx.fillStyle = '#ff0';
-    ctx.fillText('Press SPACE to Start', cx, cy + C * 6.5);
+    ctx.fillText(isMobile ? 'Tap to Start' : 'Press SPACE to Start', cx, cy + C * 6.5);
   }
 
   // Version / credits
@@ -978,7 +1162,7 @@ function draw() {
 
     ctx.fillStyle = '#666';
     ctx.font = fontSm;
-    ctx.fillText('Press ENTER to confirm', cx, slotY + slotH + C * 1.2);
+    ctx.fillText(isMobile ? 'Tap to enter initials' : 'Press ENTER to confirm', cx, slotY + slotH + C * 1.2);
   }
 
   // Game Over overlay
@@ -1022,7 +1206,7 @@ function draw() {
     ctx.font = fontMd;
     const blink = Math.sin(Date.now() / 400) > 0;
     if (blink) {
-      ctx.fillText('Press SPACE to Restart', cx, midY + C * 5);
+      ctx.fillText(isMobile ? 'Tap to Restart' : 'Press SPACE to Restart', cx, midY + C * 5);
     }
   }
 }
